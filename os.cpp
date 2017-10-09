@@ -30,6 +30,7 @@ namespace os_ops {
                              disk_num{other.disk_num}, cd_num{other.cd_num},
                              devices{std::move(other.devices)},
                              ready_queue{std::move(other.ready_queue)} {
+    std::cout << "moving" << std::endl;
     other.active_process = nullptr;
     for (auto& d: devices) for (auto &p: d) p = nullptr;
     for (auto& p: ready_queue) p = nullptr;
@@ -54,7 +55,11 @@ namespace os_ops {
     }
 
     std::cout << "Starting location in memory: ";
-    size_t start_mem_loc = InputWithTypeCheck<size_t>("Memory location invalid");
+    int start_mem_loc = InputWithTypeCheck<int>("Memory location invalid");
+    while (start_mem_loc < 0) {
+      std::cout << "Start memory location must be >= 0: ";
+      start_mem_loc = InputWithTypeCheck<int>("Memory location invalid");
+    }
 
     char operation = 'w';
     if (device_type != 'p') {  // if device is a printer, only write operation
@@ -66,10 +71,14 @@ namespace os_ops {
       }
     }
 
-    size_t file_size = 0;
+    int file_size = 0;
     if (operation == 'w') {
       std::cout << "Write file size: ";
-      file_size = InputWithTypeCheck<size_t>("File size invalid");
+      file_size = InputWithTypeCheck<int>("File size invalid");
+      while (file_size <= 0) {
+        std::cout << "File size must be > 0: ";
+        file_size = InputWithTypeCheck<int>("File size invalid");
+      }
     }
     active_process->file_name = file_name;
     active_process->start_mem_loc = start_mem_loc;
@@ -204,13 +213,13 @@ namespace os_ops {
 
   OS Sysgen() {
     std::cout << "SYSGEN" << std::endl;
-    std::cout << "Num of printers: ";
+    std::cout << "Num of printer devices: ";
     size_t printer_num = InputWithTypeCheck<size_t>("Invalid number of printers");
 
-    std::cout << "Num of disk drives: ";
+    std::cout << "Num of disk devices: ";
     size_t disk_num = InputWithTypeCheck<size_t>("Invalid number of disk drives");
 
-    std::cout << "Num of cd drives: ";
+    std::cout << "Num of cd-rw devices: ";
     size_t cd_num = InputWithTypeCheck<size_t>("Invalid number of cd drives");
 
     return OS{printer_num, disk_num, cd_num};

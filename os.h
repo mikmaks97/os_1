@@ -15,7 +15,7 @@ class OS {
   public:
     OS(size_t num_of_printers, size_t num_of_disks, size_t num_of_cd_drives) :
         printer_num{num_of_printers}, disk_num{num_of_disks},
-        cd_num{num_of_cd_drives} {
+        cd_num{num_of_cd_drives}, active_process{nullptr} {
       devices.resize(printer_num + disk_num + num_of_cd_drives);
     }
     ~OS();
