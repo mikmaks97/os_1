@@ -13,7 +13,7 @@ namespace os_ops {
 // Basic OS class for managing processes
 class OS {
   public:
-    OS(size_t num_of_printers, size_t num_of_disks, size_t num_of_cd_drives) :
+    OS(int num_of_printers, int num_of_disks, int num_of_cd_drives) :
         printer_num{num_of_printers}, disk_num{num_of_disks},
         cd_num{num_of_cd_drives}, active_process{nullptr} {
       devices.resize(printer_num + disk_num + num_of_cd_drives);
@@ -64,7 +64,7 @@ class OS {
     PCB* active_process;
 
     size_t pid_count = 0;
-    size_t printer_num, disk_num, cd_num;
+    int printer_num, disk_num, cd_num;
 
     // all devices are stored in on array in order cd/rw->disks->printers
     std::vector<std::deque<PCB*>> devices;

@@ -214,13 +214,25 @@ namespace os_ops {
   OS Sysgen() {
     std::cout << "SYSGEN" << std::endl;
     std::cout << "Num of printer devices: ";
-    size_t printer_num = InputWithTypeCheck<size_t>("Invalid number of printers");
+    int printer_num = InputWithTypeCheck<int>("Invalid number of printers");
+    while (printer_num < 0) {
+      std::cout << "Number of printers must be >= 0" << std::endl;
+      printer_num = InputWithTypeCheck<int>("Invalid number of printers");
+    }
 
     std::cout << "Num of disk devices: ";
-    size_t disk_num = InputWithTypeCheck<size_t>("Invalid number of disk drives");
+    int disk_num = InputWithTypeCheck<int>("Invalid number of disk devices");
+    while (disk_num < 0) {
+      std::cout << "Number of disk devices must be >= 0" << std::endl;
+      disk_num = InputWithTypeCheck<int>("Invalid number of disk devices");
+    }
 
     std::cout << "Num of cd-rw devices: ";
-    size_t cd_num = InputWithTypeCheck<size_t>("Invalid number of cd drives");
+    int cd_num = InputWithTypeCheck<int>("Invalid number of cd-rw devices");
+    while (cd_num < 0) {
+      std::cout << "Number of cd-rw devices must be >= 0" << std::endl;
+      cd_num = InputWithTypeCheck<int>("Invalid number of cd-rw devices");
+    }
 
     return OS{printer_num, disk_num, cd_num};
   }
