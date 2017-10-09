@@ -28,7 +28,7 @@ LIBS_ALL =  -L/usr/lib -L/usr/local/lib $(MATH_LIBS)
 ALL_OBJ1=run_os.o os.o
 PROGRAM_1=run.me
 $(PROGRAM_1): $(ALL_OBJ1)
-	mkdir $(TEMP_DIR)
+	-mkdir $(TEMP_DIR)
 	g++ $(C++FLAG) -o $(EXEC_DIR)/$@ $(ALL_OBJ1) $(INCLUDES) $(LIBS_ALL)
 
 
