@@ -216,21 +216,21 @@ namespace os_ops {
     std::cout << "Num of printer devices: ";
     int printer_num = InputWithTypeCheck<int>("Invalid number of printers");
     while (printer_num < 0) {
-      std::cout << "Number of printers must be >= 0" << std::endl;
+      std::cout << "Number of printers must be >= 0: ";
       printer_num = InputWithTypeCheck<int>("Invalid number of printers");
     }
 
     std::cout << "Num of disk devices: ";
     int disk_num = InputWithTypeCheck<int>("Invalid number of disk devices");
     while (disk_num < 0) {
-      std::cout << "Number of disk devices must be >= 0" << std::endl;
+      std::cout << "Number of disk devices must be >= 0: ";
       disk_num = InputWithTypeCheck<int>("Invalid number of disk devices");
     }
 
     std::cout << "Num of cd-rw devices: ";
     int cd_num = InputWithTypeCheck<int>("Invalid number of cd-rw devices");
     while (cd_num < 0) {
-      std::cout << "Number of cd-rw devices must be >= 0" << std::endl;
+      std::cout << "Number of cd-rw devices must be >= 0: ";
       cd_num = InputWithTypeCheck<int>("Invalid number of cd-rw devices");
     }
 
