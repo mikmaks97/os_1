@@ -261,8 +261,8 @@ namespace os_ops {
       std::cout << std::setw(6) << std::left << pcb->pid;
       std::string file_size_out = (pcb->op == 'r') ? "-" : std::to_string(pcb->file_size);
       std::string cylinder_num = (pcb->cylinder_num < 0) ? "-" : std::to_string(pcb->cylinder_num);
+      float avg_burst_time = (pcb->bursts == 0) ? 0 : pcb->cpu_time/pcb->bursts;
       if (print_props) {
-        float avg_burst_time = (pcb->bursts == 0) ? 0 : pcb->cpu_time/pcb->bursts;
       std::cout << std::setw(12) << std::left << pcb->file_name
                 << std::setw(11) << std::left << pcb->start_mem_loc
                 << std::setw(6) <<  std::left << pcb->op
@@ -270,6 +270,11 @@ namespace os_ops {
                 << std::setw(13) << std::left << cylinder_num
                 << std::setw(11) << std::left << pcb->cpu_time
                 << std::setw(9) <<  std::left << avg_burst_time;
+      }
+      else {
+        std::cout << std::setw(53) << " "
+                  << std::setw(11) << std::left << pcb->cpu_time
+                  << std::setw(9)  << std::left << avg_burst_time;
       }
       std::cout << std::endl;
       lines_printed++;
