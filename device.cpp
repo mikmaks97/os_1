@@ -60,16 +60,13 @@ Disk::~Disk() {
 }
 void Disk::AddRequest(PCB* request) {
   if (!running) {
-    std::cout << "Added to 1" << std::endl;
     queue_1.push(head_pos, request);
     return;
   }
   if (run_queue == 1) {
-    std::cout << "Added to 2" << std::endl;
     queue_2.push(head_pos, request);
   }
   else if (run_queue == 2) {
-    std::cout << "Added to 1" << std::endl;
     queue_1.push(head_pos, request);
   }
 }
