@@ -3,6 +3,7 @@
 // Implementation file for methods and function of basic OS in os.h
 
 #include "os.h"
+#include <iomanip>
 #include <limits>
 #include <iostream>
 
@@ -28,15 +29,15 @@ namespace os_ops {
                              pid_count{other.pid_count},
                              printer_num{other.printer_num},
                              disk_num{other.disk_num}, cd_num{other.cd_num},
+                             CPU_time_sum{other.CPU_time_sum},
+                             num_of_completed{other.num_of_completed},
+                             time_slice_length{other.time_slice_length},
                              devices{std::move(other.devices)},
                              ready_queue{std::move(other.ready_queue)} {
-    std::cout << "moving" << std::endl;
     other.active_process = nullptr;
-    for (auto& d: devices) for (auto &p: d) p = nullptr;
-    for (auto& p: ready_queue) p = nullptr;
   }
   OS::~OS() {
-    for (auto& d: devices) for (auto &p: d) delete p;
+    for (auto& d: devices) delete d;
     for (auto& p: ready_queue) delete p;
     delete active_process;
     active_process = nullptr;
@@ -47,6 +48,15 @@ namespace os_ops {
       std::cerr << "I/O request failed. CPU has no active process" << std::endl;
       return;
     }
+
+    active_process->cpu_time += TimeSliceInterrupt();
+    active_process->bursts++;
+
+    int device_id = (device_type-99) % 11;
+    int offset = cd_num*(--device_id >= 0);
+    offset += disk_num*(device_id-1 >= 0);
+    int index = offset + device_num-1;
+
     std::cout << "File name (max 20 characters): ";
     std::string file_name = InputWithTypeCheck<std::string>("File name invalid");
     while (file_name.size() > 20) {
@@ -71,6 +81,19 @@ namespace os_ops {
       }
     }
 
+    int cylinder = -1;
+    if (device_type == 'd') {
+      Disk* d = static_cast<Disk*>(devices[index]);
+      std::cout << "Cylinder to access: ";
+      cylinder = InputWithTypeCheck<int>("Cylinder number invalid");
+      while (cylinder < 0 || cylinder > d->num_of_cylinders-1) {
+        std::cout << "Cylinder number must be 0-"
+                  << d->num_of_cylinders - 1
+                  << ": ";
+        cylinder = InputWithTypeCheck<int>("Cylinder number invalid");
+      }
+    }
+
     int file_size = 0;
     if (operation == 'w') {
       std::cout << "Write file size: ";
@@ -84,14 +107,10 @@ namespace os_ops {
     active_process->start_mem_loc = start_mem_loc;
     active_process->op = operation;
     active_process->file_size = file_size;
+    active_process->cylinder_num = cylinder;
 
-    // convert ascii device type (c/d/p) to (0/1/2)
-    int device_id = (device_type-99) % 11;
-
-    // since all devices are stored in one array offset depends on device type
-    int offset = cd_num*(--device_id >= 0);
-    offset += disk_num*(device_id-1 >= 0);
-    devices[offset + device_num-1].push_back(active_process);
+    // push process onto the device queue
+    devices[index]->AddRequest(active_process);
 
     // move new process from ready queue to CPU
     if (!ready_queue.empty()) {
@@ -109,21 +128,21 @@ namespace os_ops {
     offset += disk_num*(device_id-1 >= 0);
     int index = offset + device_num-1;
 
-    if (devices[index].empty()) {
+    PCB* finished = devices[index]->PopFinished();
+    if (finished == nullptr) {
       std::cerr << "Device queue empty." << std::endl;
       return;
     }
 
     // move process for which I/O finished to ready queue or directly to CPU
     if (active_process == nullptr) {
-      active_process = devices[index].front();
+      active_process = finished;
     }
     else {
-      ready_queue.push_back(devices[index].front());
+      ready_queue.push_back(finished);
     }
-    std::cout << "IO request for process " << devices[index].front()->pid
-              << " completed" << std::endl;
-    devices[index].pop_front();
+    std::cout << "IO request for process " << finished->pid << " completed"
+              << std::endl;
   }
 
   void OS::NewProcess() {
@@ -136,12 +155,42 @@ namespace os_ops {
       ready_queue.push_back(new_process);
     }
   }
+
+  int OS::TimeSliceInterrupt() {
+    std::cout << "Duration of time slice process was in the CPU: ";
+    int duration = InputWithTypeCheck<int>("Duration invalid: ");
+    while (duration < 0 || duration > time_slice_length) {
+      std::cout << "Duration must be 0-" << time_slice_length << ": ";
+      duration = InputWithTypeCheck<int>("Duration invalid: ");
+    }
+    return duration;
+  }
+
+  void OS::EndOfTimeSlice() {
+    if (active_process == nullptr) {
+      std::cerr << "No active process" << std::endl;
+      return;
+    }
+    active_process->cpu_time += time_slice_length;
+    active_process->bursts++;
+    ready_queue.push_back(active_process);
+    active_process = ready_queue.front();
+    ready_queue.pop_front();
+  }
+
   void OS::TerminateActiveProcess() {
     if (active_process == nullptr) {
       std::cerr << "No active process to terminate" << std::endl;
       return;
     }
-    std::cout << "Process " << active_process->pid << " terminated" << std::endl;
+    active_process->cpu_time += TimeSliceInterrupt();
+    active_process->bursts++;
+    CPU_time_sum += active_process->cpu_time;
+    num_of_completed++;
+    float avg_burst_time = (active_process->bursts == 0) ? 0 : active_process->cpu_time/active_process->bursts;
+    std::cout << "Process " << active_process->pid << " terminated. ";
+    std::cout << "Total CPU time: " << active_process->cpu_time
+              << ", avg. burst time: " << avg_burst_time << std::endl;
     delete active_process;  // reclaim PCB memory
     if (ready_queue.size() > 0) {
       active_process = ready_queue.front();
@@ -161,9 +210,18 @@ namespace os_ops {
     }
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(),'\n');
 
-    std::cout << "PID\t" << "File name\t\t" << "Mem start\t"
-              << "r/w\t" << "file length" << std::endl;
-    int lines_printed = 1;
+    float avg_CPU_time = (num_of_completed == 0) ? 0 : CPU_time_sum/num_of_completed;
+    std::cout << "Average CPU time of completed processes: "
+              << avg_CPU_time << std::endl;
+    std::cout << std::setw(6) <<  std::left << "PID"
+              << std::setw(12) << std::left << "Filename"
+              << std::setw(11) << std::left << "Memstart"
+              << std::setw(6) <<  std::left << "r/w"
+              << std::setw(11) << std::left << "File len"
+              << std::setw(13) << std::left << "Cylinder #"
+              << std::setw(11) << std::left << "CPU time"
+              << std::setw(9) <<  std::left << "Avg burst" << std::endl;
+    int lines_printed = 2;
     char device_type = (snap_type-99) % 11;
     if (device_type == 4) {  // ready queue id == 4
       std::cout << "-----Ready queue-----" << std::endl;
@@ -186,25 +244,32 @@ namespace os_ops {
       for (int i = start; i < end; i++) {
         std::cout << "-----" << snap_type << (i+1)-start << "-----" << std::endl;
         lines_printed++;
-        PrintStatus(devices[i], true, lines_printed);
+        PrintStatus(devices[i]->AllRequests(), true, lines_printed);
       }
     }
 
   }
 
-  void OS::PrintStatus(const std::deque<PCB*>& device, bool print_props, int& lines_printed) const {
-    for (const auto& pcb: device) {
+  void OS::PrintStatus(const std::deque<PCB*>& req_queue, bool print_props,
+                       int& lines_printed) const {
+    for (const auto& pcb: req_queue) {
       if (lines_printed >= 22) {
         std::cout << "Press ENTER to continue output";
         std::cin.ignore(std::numeric_limits<std::streamsize>::max(),'\n');
         lines_printed = 0;
       }
-      std::cout << pcb->pid;
+      std::cout << std::setw(6) << std::left << pcb->pid;
       std::string file_size_out = (pcb->op == 'r') ? "-" : std::to_string(pcb->file_size);
+      std::string cylinder_num = (pcb->cylinder_num < 0) ? "-" : std::to_string(pcb->cylinder_num);
       if (print_props) {
-        printf("\t%-24s%-16s%c\t%s", pcb->file_name.c_str(),
-               std::to_string(pcb->start_mem_loc).c_str(), pcb->op,
-               file_size_out.c_str());
+        float avg_burst_time = (pcb->bursts == 0) ? 0 : pcb->cpu_time/pcb->bursts;
+      std::cout << std::setw(12) << std::left << pcb->file_name
+                << std::setw(11) << std::left << pcb->start_mem_loc
+                << std::setw(6) <<  std::left << pcb->op
+                << std::setw(11) << std::left << file_size_out
+                << std::setw(13) << std::left << cylinder_num
+                << std::setw(11) << std::left << pcb->cpu_time
+                << std::setw(9) <<  std::left << avg_burst_time;
       }
       std::cout << std::endl;
       lines_printed++;
@@ -226,6 +291,16 @@ namespace os_ops {
       std::cout << "Number of disk devices must be >= 0: ";
       disk_num = InputWithTypeCheck<int>("Invalid number of disk devices");
     }
+    std::vector<int> cyl_nums;
+    for (int i = 0; i < disk_num; i++) {
+      std::cout << "Num of disk " << i+1 << " cylinders: ";
+      int num_of_cylinders = InputWithTypeCheck<int>("Invalid number of cylinders");
+      while (num_of_cylinders < 0) {
+        std::cout << "Number of cylinders must be >= 0: ";
+        num_of_cylinders = InputWithTypeCheck<int>("Invalid number of cylinders");
+      }
+      cyl_nums.push_back(num_of_cylinders);
+    }
 
     std::cout << "Num of cd-rw devices: ";
     int cd_num = InputWithTypeCheck<int>("Invalid number of cd-rw devices");
@@ -234,7 +309,14 @@ namespace os_ops {
       cd_num = InputWithTypeCheck<int>("Invalid number of cd-rw devices");
     }
 
-    return OS{printer_num, disk_num, cd_num};
+    std::cout << "Length of time slice (ms): ";
+    int time_slice = InputWithTypeCheck<int>("Invalid time slice length");
+    while (time_slice <= 0) {
+      std::cout << "Length of time slice must be > 0: ";
+      cd_num = InputWithTypeCheck<int>("Invalid time slice length");
+    }
+
+    return OS{printer_num, disk_num, cd_num, time_slice, cyl_nums};
   }
 
 }

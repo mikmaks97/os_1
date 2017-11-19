@@ -25,7 +25,7 @@ LIBS_ALL =  -L/usr/lib -L/usr/local/lib $(MATH_LIBS)
 
 
 #Gray to binary program
-ALL_OBJ1=run_os.o os.o
+ALL_OBJ1=run_os.o os.o device.o
 PROGRAM_1=run.me
 $(PROGRAM_1): $(ALL_OBJ1)
 	-mkdir $(TEMP_DIR)

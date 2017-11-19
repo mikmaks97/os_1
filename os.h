@@ -2,26 +2,45 @@
 // 8 Oct 2017
 // A basic model of an operating system that moves processes between device
 // queues and the ready queue based on I/O requests and interrupts.
+#ifndef OS_H
+#define OS_H
 
+#include <iostream>
 #include <cstdlib>
 #include <string>
 #include <vector>
 #include <deque>
+#include "pcb.h"
+#include "device.h"
 
 namespace os_ops {
 
 // Basic OS class for managing processes
 class OS {
   public:
-    OS(int num_of_printers, int num_of_disks, int num_of_cd_drives) :
+    OS(int num_of_printers, int num_of_disks, int num_of_cd_drives,
+       int time_slice, const std::vector<int>& cyl_nums) :
         printer_num{num_of_printers}, disk_num{num_of_disks},
-        cd_num{num_of_cd_drives}, active_process{nullptr} {
-      devices.resize(printer_num + disk_num + num_of_cd_drives);
+        cd_num{num_of_cd_drives}, active_process{nullptr},
+        time_slice_length{time_slice} {
+      for (int i = 0; i < cd_num; i++) {
+        devices.push_back(Device::make_device('c'));
+      }
+      for (int i = 0; i < disk_num; i++) {
+        Device* new_device = Device::make_device('d');
+        Disk* new_disk = static_cast<Disk*>(new_device);
+        new_disk->num_of_cylinders = cyl_nums[i];
+        devices.push_back(new_disk);
+      }
+      for (int i = 0; i < printer_num; i++) {
+        devices.push_back(Device::make_device('p'));
+      }
     }
     ~OS();
-    // disable copy/move constructor and copy/move assignment operator
-    OS(const OS&) = delete;
+
     OS(OS&&);
+    // disable copy constructor and copy/move assignment operator
+    OS(const OS&) = delete;
     OS& operator=(const OS&) = delete;
     OS& operator=(OS&&) = delete;
 
@@ -38,8 +57,16 @@ class OS {
     // ready queue (I/O request completed).
     void HandleInterrupt(char device_type, int device_num);
 
+    // Ask for duration of time slice process was in CPU until system call.
+    // Return duration.
+    int TimeSliceInterrupt();
+
     // Add new process to the ready queue.
     void NewProcess();
+
+    // Remove active process from the CPU and push it to the back of the ready
+    // queue (round robin).
+    void EndOfTimeSlice();
 
     // Remove active process from the CPU and free its PCB memory.
     void TerminateActiveProcess();
@@ -48,26 +75,17 @@ class OS {
     void Snapshot() const;
 
   private:
-    struct PCB {
-      enum state {active, waiting};  // unused
-      size_t pid;
-
-      std::string file_name;
-      size_t start_mem_loc;
-      char op;
-      size_t file_size;
-
-      PCB(size_t new_pid) : pid{new_pid}, file_name{""},
-                            start_mem_loc{0}, op{'-'}, file_size{0} {}
-    };
     //CPU
     PCB* active_process;
+    int time_slice_length;
+    float CPU_time_sum = 0;
+    int num_of_completed = 0;
 
     size_t pid_count = 0;
     int printer_num, disk_num, cd_num;
 
-    // all devices are stored in on array in order cd/rw->disks->printers
-    std::vector<std::deque<PCB*>> devices;
+    // all devices are stored in one array in order cd/rw->disks->printers
+    std::vector<Device*> devices;
     std::deque<PCB*> ready_queue;
 
     // Print content of a device queue or the ready queue in 24 line chunks.
@@ -81,3 +99,5 @@ class OS {
 OS Sysgen();
 
 }
+
+#endif

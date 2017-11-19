@@ -23,6 +23,7 @@ int main() {
         if (input[0] == 'A') os.NewProcess();
         else if (input[0] == 't') os.TerminateActiveProcess();
         else if (input[0] == 'S') os.Snapshot();
+        else if (input[0] == 'T') os.EndOfTimeSlice();
         else invalid = true;
       }
       // all input of length 2 is upper/lowercase letter followed by number
