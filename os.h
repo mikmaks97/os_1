@@ -10,6 +10,9 @@
 #include <string>
 #include <vector>
 #include <deque>
+#include <set>
+#include <utility>
+
 #include "pcb.h"
 #include "device.h"
 
@@ -19,10 +22,21 @@ namespace os_ops {
 class OS {
   public:
     OS(int num_of_printers, int num_of_disks, int num_of_cd_drives,
-       int time_slice, const std::vector<int>& cyl_nums) :
+       int time_slice, const std::vector<int>& cyl_nums,
+       int process_page_size, int memory_size, int max_process_size) :
         printer_num{num_of_printers}, disk_num{num_of_disks},
         cd_num{num_of_cd_drives}, active_process{nullptr},
-        time_slice_length{time_slice} {
+        time_slice_length{time_slice}, page_size{process_page_size},
+        mem_size{memory_size}, max_proc_size{max_process_size},
+        frame_table{(size_t)mem_size/page_size, std::make_pair(-1,-1)} {
+      // add all frames to free frame list
+      for (int i = 0; i < mem_size/page_size; i++) {
+        free_frame_list.push_back(i);
+      }
+
+      PCB::page_size = page_size;  // set page size for all PCBs
+
+      // create devices
       for (int i = 0; i < cd_num; i++) {
         devices.push_back(Device::make_device('c'));
       }
@@ -68,6 +82,9 @@ class OS {
     // queue (round robin).
     void EndOfTimeSlice();
 
+    // Kill process with pid == proc_id
+    void Kill(int proc_id, bool terminated=false);
+
     // Remove active process from the CPU and free its PCB memory.
     void TerminateActiveProcess();
 
@@ -84,9 +101,28 @@ class OS {
     size_t pid_count = 0;
     int printer_num, disk_num, cd_num;
 
+    int page_size, mem_size, max_proc_size;
+    std::vector<int> free_frame_list;
+    std::vector<std::pair<int,int>> frame_table;  // pair of (pid, page #)
+
     // all devices are stored in one array in order cd/rw->disks->printers
     std::vector<Device*> devices;
     std::deque<PCB*> ready_queue;
+
+    // store job pool in set ordered by process size so iteration
+    // from largest to smallest is fast
+    struct LargerSize {
+      bool operator()(const PCB* p1, const PCB* p2) const {
+        return p2->size < p1->size;
+      }
+    };
+    std::multiset<PCB*, LargerSize> input_queue;
+
+    // Dispatch process p to CPU, ready queue or job pool depending on size
+    void DispatchProcess(PCB* p);
+
+    // Check if output exceeded 22 lines
+    void CheckLines(int& lines_printed) const;
 
     // Print content of a device queue or the ready queue in 24 line chunks.
     // print_props == true to print process I/O parameters.

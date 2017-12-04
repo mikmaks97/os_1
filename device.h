@@ -7,44 +7,57 @@
 #include <cstdlib>
 #include <vector>
 #include <algorithm>
-#include "pcb.h"
 #include <string>
 
-namespace {
-}
+#include "pcb.h"
 
+// Interface for devices as well as factory method to create specific devices
+// AddRequest(PCB* request) - add a request to the device queue
+// PopFinished()            - pop a request off the device queue
+// RemoveRequest(int pid)   - find and remove request with pid == pid if exists
+// AllRequests()            - return all requests as a deque
 struct Device {
   static Device* make_device(char device_type);
   virtual ~Device() = 0;
   virtual void AddRequest(PCB* request) = 0;
   virtual PCB* PopFinished() = 0;
+  virtual void RemoveRequest(int pid) = 0;
   virtual const std::deque<PCB*> AllRequests() const = 0;
 };
 
+// Derived Printer class
 struct Printer: Device {
   ~Printer();
   void AddRequest(PCB* request);
   PCB* PopFinished();
   const std::deque<PCB*> AllRequests() const;
 
+  void RemoveRequest(int pid);
   std::deque<PCB*> req_queue;
 };
 
+// Derived CD/RW class
 struct CD_RW: Device {
   ~CD_RW();
   void AddRequest(PCB* request);
   PCB* PopFinished();
   const std::deque<PCB*> AllRequests() const;
 
+  void RemoveRequest(int pid);
   std::deque<PCB*> req_queue;
 };
 
+
+// Derived Disk class
+// Uses FSCAN scheduling algorithm for device queue
 struct Disk: Device {
   private:
     bool running = false;
     int run_queue = 1;
     int head_pos = 0;
 
+    // Comparison functor for PCB* type in priority queue
+    // Priority: minimum seek time from current head position to PCB cylinder
     struct LessSeekTime {
       LessSeekTime(int h_pos): _head_pos{h_pos} {}
       int _head_pos;
@@ -53,11 +66,15 @@ struct Disk: Device {
       }
     };
 
+    // Helper priority queue class for PCBs
     class PCBPriorityQueue {
       private:
         std::vector<PCB*> elements;
 
       public:
+        typedef std::vector<PCB*>::iterator iterator;
+        typedef std::vector<PCB*>::const_iterator const_iterator;
+
         std::vector<PCB*> ToVector(int h_pos) const {
           std::vector<PCB*> elems = elements;
           std::vector<PCB*> new_vec;
@@ -78,6 +95,9 @@ struct Disk: Device {
             elements.pop_back();
           }
         }
+
+        iterator erase(iterator pos) {return elements.erase(pos);}
+
         PCB* top() {
           if (!elements.empty()) {
             return elements.front();
@@ -87,8 +107,6 @@ struct Disk: Device {
         int size() {return elements.size();}
         bool empty() {return elements.empty();}
 
-        typedef std::vector<PCB*>::iterator iterator;
-        typedef std::vector<PCB*>::const_iterator const_iterator;
         iterator begin() {return elements.begin();}
         const_iterator begin() const {return elements.begin();}
         iterator end()   {return elements.end();}
@@ -97,11 +115,12 @@ struct Disk: Device {
 
   public:
     int num_of_cylinders;
-    PCBPriorityQueue queue_1, queue_2;
+    PCBPriorityQueue queue_1, queue_2;  // run queue and waiting queue
 
     Disk(): num_of_cylinders{0} {}
     ~Disk();
 
+    void RemoveRequest(int pid);
     void AddRequest(PCB* request);
     PCB* PopFinished();
     const std::deque<PCB*> AllRequests() const;

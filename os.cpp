@@ -2,11 +2,14 @@
 // 08 Oct 2017
 // Implementation file for methods and function of basic OS in os.h
 
-#include "os.h"
 #include <iomanip>
 #include <limits>
 #include <iostream>
+#include <sstream>
 
+#include "os.h"
+
+int PCB::page_size = 0;
 namespace os_ops {
 
   // Get input from standard input stream until input type matches type T of
@@ -32,15 +35,19 @@ namespace os_ops {
                              CPU_time_sum{other.CPU_time_sum},
                              num_of_completed{other.num_of_completed},
                              time_slice_length{other.time_slice_length},
+                             page_size{other.page_size}, mem_size{other.mem_size},
+                             max_proc_size{other.max_proc_size},
+                             free_frame_list{std::move(other.free_frame_list)},
+                             frame_table{std::move(other.frame_table)},
                              devices{std::move(other.devices)},
-                             ready_queue{std::move(other.ready_queue)} {
+                             ready_queue{std::move(other.ready_queue)},
+                             input_queue{std::move(other.input_queue)} {
     other.active_process = nullptr;
   }
   OS::~OS() {
     for (auto& d: devices) delete d;
     for (auto& p: ready_queue) delete p;
     delete active_process;
-    active_process = nullptr;
   }
 
   void OS::IORequest(char device_type, int device_num) {
@@ -49,14 +56,18 @@ namespace os_ops {
       return;
     }
 
+    // add CPU time to process
     active_process->cpu_time += TimeSliceInterrupt();
     active_process->bursts++;
 
+    // calculate which device IO request is meant for
+    // convert lowercase device type (c/d/p) to 0,1,2
     int device_id = (device_type-99) % 11;
     int offset = cd_num*(--device_id >= 0);
     offset += disk_num*(device_id-1 >= 0);
     int index = offset + device_num-1;
 
+    // get all IO request information
     std::cout << "File name (max 20 characters): ";
     std::string file_name = InputWithTypeCheck<std::string>("File name invalid");
     while (file_name.size() > 20) {
@@ -64,12 +75,31 @@ namespace os_ops {
       file_name = InputWithTypeCheck<std::string>("File name invalid");
     }
 
-    std::cout << "Starting location in memory: ";
-    int start_mem_loc = InputWithTypeCheck<int>("Memory location invalid");
-    while (start_mem_loc < 0) {
-      std::cout << "Start memory location must be >= 0: ";
-      start_mem_loc = InputWithTypeCheck<int>("Memory location invalid");
+    int start_mem_loc = -1;
+    bool invalid = true;
+    std::cout << "Starting location in memory (hex): ";
+    while (invalid) {
+      std::string start_mem_loc_str = InputWithTypeCheck<std::string>("Memory location invalid");
+      // make sure memory input is valid hex
+      while (start_mem_loc_str.find_first_not_of("012345679abcdefABCDEF") != std::string::npos) {
+        start_mem_loc_str = InputWithTypeCheck<std::string>("Memory location invalid");
+      }
+      std::istringstream ss{start_mem_loc_str};
+      ss >> std::hex >> start_mem_loc;
+      if (start_mem_loc > 0 && start_mem_loc < active_process->size) {
+        invalid = false;
+      }
+      else {
+        std::cout << "Start memory location must be >= 0 and < " << active_process->size << ": ";
+      }
     }
+    // split input logical address into page number and displacement
+    int displacement = start_mem_loc % page_size;
+    int page_number = start_mem_loc/page_size;
+    // get frame number from page table
+    int frame_number = active_process->page_table[page_number];
+    active_process->physical_loc = frame_number + displacement;
+    std::cout << "Physical address: " << active_process->physical_loc << std::endl;
 
     char operation = 'w';
     if (device_type != 'p') {  // if device is a printer, only write operation
@@ -82,7 +112,7 @@ namespace os_ops {
     }
 
     int cylinder = -1;
-    if (device_type == 'd') {
+    if (device_type == 'd') {  // if device is disk, ask for cylinder number
       Disk* d = static_cast<Disk*>(devices[index]);
       std::cout << "Cylinder to access: ";
       cylinder = InputWithTypeCheck<int>("Cylinder number invalid");
@@ -146,13 +176,45 @@ namespace os_ops {
   }
 
   void OS::NewProcess() {
-    PCB *new_process = new PCB{pid_count++};
-    std::cout << "Process " << new_process->pid << " arrived" << std::endl;
-    if (active_process == nullptr) {
-      active_process = new_process;
+    size_t pid = pid_count++;
+    std::cout << "Process " << pid << " arrived" << std::endl;
+    std::cout << "Process size: ";
+    int proc_size = InputWithTypeCheck<int>("Process size invalid: ");
+    while (proc_size <= 0) {
+      std::cout << "Process size must be > 0: ";
+      proc_size = InputWithTypeCheck<int>("Process size invalid: ");
     }
+    if (proc_size > max_proc_size) {
+      std::cerr << "Rejecting process with size (" << proc_size << ") larger than maximum process size ("
+                << max_proc_size << ")" << std::endl;
+      return;
+    }
+    PCB *new_process = new PCB{pid, proc_size};
+    DispatchProcess(new_process);
+  }
+
+  void OS::DispatchProcess(PCB* p) {
+    // if the there are enough frames for the process add it to memory
+    if (p->page_table.size() <= free_frame_list.size()) {
+      // allocate frames to process
+      for (int i = 0; i < p->page_table.size(); i++) {
+        int new_frame = free_frame_list.back();
+        free_frame_list.pop_back();
+        p->page_table[i] = new_frame;
+        frame_table[new_frame] = std::make_pair(p->pid, i);
+      }
+
+      // give process to CPU or put in ready queue
+      if (active_process == nullptr) {
+        active_process = p;
+      }
+      else {
+        ready_queue.push_back(p);
+      }
+    }
+    // otherwise add it to the job pool
     else {
-      ready_queue.push_back(new_process);
+      input_queue.insert(p);
     }
   }
 
@@ -171,11 +233,96 @@ namespace os_ops {
       std::cerr << "No active process" << std::endl;
       return;
     }
+    // increment CPU time by time slice length and context switch
     active_process->cpu_time += time_slice_length;
-    active_process->bursts++;
     ready_queue.push_back(active_process);
     active_process = ready_queue.front();
     ready_queue.pop_front();
+  }
+
+  void OS::Kill(int proc_id, bool terminated) {
+    PCB* kill_proc = nullptr;
+    bool stalled = false;
+    // check CPU
+    if (active_process != nullptr && active_process->pid == proc_id) {
+      kill_proc = active_process;
+    }
+    // check ready queue
+    if (kill_proc == nullptr) {
+      for (auto itr = ready_queue.begin(); itr != ready_queue.end();) {
+        if ((*itr)->pid == proc_id) {
+          kill_proc = *itr;
+          itr = ready_queue.erase(itr);
+          break;
+        }
+        else ++itr;
+      }
+    }
+    // check device queues
+    if (kill_proc == nullptr) {
+      bool found = false;
+      for (const auto& d: devices) {
+        for (const auto& p: d->AllRequests()) {
+          if (p->pid == proc_id) {
+            kill_proc = p;
+            d->RemoveRequest(proc_id);
+            stalled = true;
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+    }
+    bool job_pool = false;
+    // check job pool
+    if (kill_proc == nullptr) {
+      for (auto itr = input_queue.begin(); itr != input_queue.end();) {
+        if ((*itr)->pid == proc_id) {
+          kill_proc = *itr;
+          itr = input_queue.erase(itr);
+          job_pool = true;
+          break;
+        }
+        else ++itr;
+      }
+    }
+    if (kill_proc == nullptr) {
+      std::cerr << "Process with pid " << proc_id << " does not exist" << std::endl;
+      return;
+    }
+
+    // accounting info
+    CPU_time_sum += kill_proc->cpu_time;
+    if (!stalled) {
+      kill_proc->bursts++;
+    }
+    if (terminated) {
+      num_of_completed++;
+    }
+    float avg_burst_time = (kill_proc->bursts == 0) ? 0 : kill_proc->cpu_time/kill_proc->bursts;
+    std::cout << "Process " << kill_proc->pid << " terminated. ";
+    std::cout << "Total CPU time: " << kill_proc->cpu_time
+              << ", avg. burst time: " << avg_burst_time << std::endl;
+
+    // free frames and add back to free frame list if process not in job pool
+    if (!job_pool) {
+      for (int i = 0; i < kill_proc->page_table.size(); i++) {
+        int freed_frame = kill_proc->page_table[i];
+        free_frame_list.push_back(freed_frame);
+        frame_table[freed_frame] = std::make_pair(-1,-1);
+      }
+    }
+    delete kill_proc;  // reclaim PCB memory
+
+    // add largest processes that can fit in free memory from job pool
+    for (auto itr = input_queue.begin(); itr != input_queue.end();) {
+      if ((*itr)->page_table.size() <= free_frame_list.size()) {
+        DispatchProcess(*itr);
+        itr = input_queue.erase(itr);
+      }
+      else ++itr;
+    }
   }
 
   void OS::TerminateActiveProcess() {
@@ -184,14 +331,7 @@ namespace os_ops {
       return;
     }
     active_process->cpu_time += TimeSliceInterrupt();
-    active_process->bursts++;
-    CPU_time_sum += active_process->cpu_time;
-    num_of_completed++;
-    float avg_burst_time = (active_process->bursts == 0) ? 0 : active_process->cpu_time/active_process->bursts;
-    std::cout << "Process " << active_process->pid << " terminated. ";
-    std::cout << "Total CPU time: " << active_process->cpu_time
-              << ", avg. burst time: " << avg_burst_time << std::endl;
-    delete active_process;  // reclaim PCB memory
+    Kill(active_process->pid, true);
     if (ready_queue.size() > 0) {
       active_process = ready_queue.front();
       ready_queue.pop_front();
@@ -201,44 +341,91 @@ namespace os_ops {
   }
 
   void OS::Snapshot() const {
-    std::cout << "Show r/p/d/c: ";
+    std::cout << "Show r/p/d/c/m/j: ";
     char snap_type = InputWithTypeCheck<char>("Invalid snapshot type (r/p/d/c)");
-    while (snap_type != 'r' && snap_type != 'p' &&
-           snap_type != 'd' && snap_type != 'c') {
+    while (snap_type != 'r' && snap_type != 'p' && snap_type != 'd' &&
+           snap_type != 'c' && snap_type != 'm' && snap_type != 'j') {
       std::cout << "Invalid, not r/p/d/c" << std::endl;
-      snap_type = InputWithTypeCheck<char>("Invalid snapshot type (r/p/d/c)");
+      snap_type = InputWithTypeCheck<char>("Invalid snapshot type (r/p/d/c/m/j)");
     }
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(),'\n');
 
-    float avg_CPU_time = (num_of_completed == 0) ? 0 : CPU_time_sum/num_of_completed;
-    std::cout << "Average CPU time of completed processes: "
-              << avg_CPU_time << std::endl;
-    std::cout << std::setw(6) <<  std::left << "PID"
-              << std::setw(12) << std::left << "Filename"
-              << std::setw(11) << std::left << "Memstart"
-              << std::setw(6) <<  std::left << "r/w"
-              << std::setw(11) << std::left << "File len"
-              << std::setw(13) << std::left << "Cylinder #"
-              << std::setw(11) << std::left << "CPU time"
-              << std::setw(9) <<  std::left << "Avg burst" << std::endl;
-    int lines_printed = 2;
-    char device_type = (snap_type-99) % 11;
-    if (device_type == 4) {  // ready queue id == 4
+    int lines_printed = 0;
+    if (snap_type != 'm' && snap_type != 'j') {
+      float avg_CPU_time = (num_of_completed == 0) ? 0 : CPU_time_sum/num_of_completed;
+      std::cout << "Average CPU time of completed processes: "
+                << avg_CPU_time << std::endl;
+      lines_printed++;
+      std::cout << std::setw(5) <<  std::left << "PID"
+                << std::setw(10) << std::left << "Filename"
+                << std::setw(9) << std::left << "Logical"
+                << std::setw(10) << std::left << "Physical"
+                << std::setw(5) <<  std::left << "r/w"
+                << std::setw(9) << std::left << "Filelen"
+                << std::setw(11) << std::left << "Cylinder#"
+                << std::setw(10) << std::left << "CPU time"
+                << std::setw(9) <<  std::left << "Avg burst" << std::endl;
+      lines_printed++;
+    }
+    if (snap_type == 'r') {  // ready queue id == 4
       std::cout << "-----Ready queue-----" << std::endl;
       lines_printed++;
       PrintStatus(ready_queue, false, lines_printed);
     }
+    else if (snap_type == 'j')  {  // input queue id == 5
+      std::cout << "-----Job pool-----" << std::endl;
+      lines_printed++;
+      std::cout << std::setw(6) << std::left << "PID"
+                << std::setw(73) << std::left << "Size"
+                << std::endl;
+      for (const auto& pcb: input_queue) {
+        CheckLines(lines_printed);
+        std::cout << std::setw(6) << std::left << pcb->pid;
+        std::cout << std::setw(73) << std::left << pcb->size;
+        std::cout << std::endl;
+        lines_printed++;
+      }
+    }
+    else if (snap_type == 'm') {
+      std::cout << "Free frame list: ";
+      std::string free_frames;
+      for (const auto& frame: free_frame_list) {
+        std::cout << frame << " ";
+      }
+      std::cout << std::endl;
+      lines_printed++;
+      CheckLines(lines_printed);
+      std::cout << "-----Frame table----" << std::endl;
+      lines_printed++;
+      CheckLines(lines_printed);
+      std::cout << std::setw(13) << std::left << "Frame num"
+                << std::setw(33) << std::left << "PID"
+                << std::setw(33) << std::left << "Page num"
+                << std::endl;
+      lines_printed++;
+      CheckLines(lines_printed);
+      for (int i = 0; i < frame_table.size(); i++) {
+        CheckLines(lines_printed);
+        std::string pid = frame_table[i].first == -1 ? "-" : std::to_string(frame_table[i].first);
+        std::string page = frame_table[i].second == -1 ? "-" : std::to_string(frame_table[i].second);
+        std::cout << std::setw(13) << std::left << i
+                  << std::setw(33) << std::left << pid
+                  << std::setw(33) << std::left << page
+                  << std::endl;
+        lines_printed++;
+      }
+    }
     else {
       // calculate which devices to print contents of
       int start = 0, end = printer_num + disk_num + cd_num;
-      if (device_type == 0) {
+      if (snap_type == 'c') {
         end = cd_num;
       }
-      else if (device_type == 1) {
+      else if (snap_type == 'd') {
         start = cd_num;
         end = cd_num + disk_num;
       }
-      else if (device_type == 2) {
+      else if (snap_type == 'p') {
         start = cd_num + disk_num;
       }
       for (int i = start; i < end; i++) {
@@ -247,37 +434,50 @@ namespace os_ops {
         PrintStatus(devices[i]->AllRequests(), true, lines_printed);
       }
     }
-
   }
 
   void OS::PrintStatus(const std::deque<PCB*>& req_queue, bool print_props,
                        int& lines_printed) const {
     for (const auto& pcb: req_queue) {
-      if (lines_printed >= 22) {
-        std::cout << "Press ENTER to continue output";
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(),'\n');
-        lines_printed = 0;
-      }
-      std::cout << std::setw(6) << std::left << pcb->pid;
-      std::string file_size_out = (pcb->op == 'r') ? "-" : std::to_string(pcb->file_size);
-      std::string cylinder_num = (pcb->cylinder_num < 0) ? "-" : std::to_string(pcb->cylinder_num);
+      CheckLines(lines_printed);
+      std::cout << std::setw(5) << std::left << pcb->pid;
       float avg_burst_time = (pcb->bursts == 0) ? 0 : pcb->cpu_time/pcb->bursts;
       if (print_props) {
-      std::cout << std::setw(12) << std::left << pcb->file_name
-                << std::setw(11) << std::left << pcb->start_mem_loc
-                << std::setw(6) <<  std::left << pcb->op
-                << std::setw(11) << std::left << file_size_out
-                << std::setw(13) << std::left << cylinder_num
-                << std::setw(11) << std::left << pcb->cpu_time
-                << std::setw(9) <<  std::left << avg_burst_time;
+        std::string file_size_out = (pcb->op == 'r') ? "-" : std::to_string(pcb->file_size);
+        std::string cylinder_num = (pcb->cylinder_num < 0) ? "-" : std::to_string(pcb->cylinder_num);
+        std::cout << std::setw(10) << std::left << pcb->file_name
+                  << std::setw(9) << std::left << pcb->start_mem_loc
+                  << std::setw(10) << std::left << pcb->physical_loc
+                  << std::setw(5) <<  std::left << pcb->op
+                  << std::setw(9) << std::left << file_size_out
+                  << std::setw(11) << std::left << cylinder_num
+                  << std::setw(10) << std::left << pcb->cpu_time
+                  << std::setw(9) <<  std::left << avg_burst_time;
       }
       else {
-        std::cout << std::setw(53) << " "
-                  << std::setw(11) << std::left << pcb->cpu_time
+        std::cout << std::setw(55) << " "
+                  << std::setw(10) << std::left << pcb->cpu_time
                   << std::setw(9)  << std::left << avg_burst_time;
       }
       std::cout << std::endl;
       lines_printed++;
+      CheckLines(lines_printed);
+      std::cout << "Page table: ";
+      lines_printed++;
+      CheckLines(lines_printed);
+      for (const auto& page: pcb->page_table) {
+        std::cout << page << " ";
+      }
+      std::cout << std::endl;
+      lines_printed++;
+    }
+  }
+
+  void OS::CheckLines(int& lines_printed) const {
+    if (lines_printed >= 22) {
+      std::cout << "Press ENTER to continue output";
+      std::cin.ignore(std::numeric_limits<std::streamsize>::max(),'\n');
+      lines_printed = 0;
     }
   }
 
@@ -321,7 +521,29 @@ namespace os_ops {
       cd_num = InputWithTypeCheck<int>("Invalid time slice length");
     }
 
-    return OS{printer_num, disk_num, cd_num, time_slice, cyl_nums};
+    std::cout << "Page size: ";
+    int page_size = InputWithTypeCheck<int>("Invalid page size");
+    while (page_size <= 0 || (page_size & (~page_size+1)) != page_size) {
+      std::cout << "Page size must be > 0 and a power of 2: ";
+      page_size = InputWithTypeCheck<int>("Invalid page size");
+    }
+
+    std::cout << "Size of memory: ";
+    int memory_size = InputWithTypeCheck<int>("Invalid memory size");
+    while (memory_size <= 0 || memory_size % page_size != 0) {
+      std::cout << "Memory size must be > 0 and multiple of page size: ";
+      memory_size = InputWithTypeCheck<int>("Invalid memory size");
+    }
+
+    std::cout << "Max process size: ";
+    int max_proc_size = InputWithTypeCheck<int>("Invalid max process size");
+    while (max_proc_size <= 0 || max_proc_size > memory_size) {
+      std::cout << "Max process size must be > 0 and <= " << memory_size << ": ";
+      max_proc_size = InputWithTypeCheck<int>("Invalid max process size");
+    }
+
+    return OS{printer_num, disk_num, cd_num, time_slice, cyl_nums,
+              page_size, memory_size, max_proc_size};
   }
 
 }
