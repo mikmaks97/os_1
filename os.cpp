@@ -99,7 +99,7 @@ namespace os_ops {
     // get frame number from page table
     int frame_number = active_process->page_table[page_number];
     active_process->physical_loc = frame_number*page_size + displacement;
-    std::cout << "Physical address: " << active_process->physical_loc << std::endl;
+    std::cout << "Physical address: " << std::hex << active_process->physical_loc << std::endl;
 
     char operation = 'w';
     if (device_type != 'p') {  // if device is a printer, only write operation
@@ -446,8 +446,8 @@ namespace os_ops {
         std::string file_size_out = (pcb->op == 'r') ? "-" : std::to_string(pcb->file_size);
         std::string cylinder_num = (pcb->cylinder_num < 0) ? "-" : std::to_string(pcb->cylinder_num);
         std::cout << std::setw(10) << std::left << pcb->file_name
-                  << std::setw(9) << std::left << pcb->start_mem_loc
-                  << std::setw(10) << std::left << pcb->physical_loc
+                  << std::setw(9) << std::left << std::hex << pcb->start_mem_loc
+                  << std::setw(10) << std::left << std::hex << pcb->physical_loc
                   << std::setw(5) <<  std::left << pcb->op
                   << std::setw(9) << std::left << file_size_out
                   << std::setw(11) << std::left << cylinder_num
