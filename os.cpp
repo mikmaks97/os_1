@@ -98,7 +98,7 @@ namespace os_ops {
     int page_number = start_mem_loc/page_size;
     // get frame number from page table
     int frame_number = active_process->page_table[page_number];
-    active_process->physical_loc = frame_number + displacement;
+    active_process->physical_loc = frame_number*page_size + displacement;
     std::cout << "Physical address: " << active_process->physical_loc << std::endl;
 
     char operation = 'w';
